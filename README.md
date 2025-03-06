@@ -5,32 +5,7 @@
     height="200"
   >
 </h3>
-<div align="center">
-    <a href="https://github.com/mendableai/firecrawl/blob/main/LICENSE">
-  <img src="https://img.shields.io/github/license/mendableai/firecrawl" alt="License">
-</a>
-    <a href="https://pepy.tech/project/firecrawl-py">
-  <img src="https://static.pepy.tech/badge/firecrawl-py" alt="Downloads">
-</a>
-<a href="https://GitHub.com/mendableai/firecrawl/graphs/contributors">
-  <img src="https://img.shields.io/github/contributors/mendableai/firecrawl.svg" alt="GitHub Contributors">
-</a>
-<a href="https://firecrawl.dev">
-  <img src="https://img.shields.io/badge/Visit-firecrawl.dev-orange" alt="Visit firecrawl.dev">
-</a>
-</div>
-<div>
-  <p align="center">
-    <a href="https://twitter.com/firecrawl_dev">
-      <img src="https://img.shields.io/badge/Follow%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow on X" />
-    </a>
-    <a href="https://www.linkedin.com/company/104100957">
-      <img src="https://img.shields.io/badge/Follow%20on%20LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white" alt="Follow on LinkedIn" />
-    </a>
-    <a href="https://discord.com/invite/gSmWdAkdwd">
-      <img src="https://img.shields.io/badge/Join%20our%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord" />
-    </a>
-  </p>
+
 </div>
 
 # 🔥 Firecrawl
@@ -612,18 +587,6 @@ Firecrawl Cloud is available at [firecrawl.dev](https://firecrawl.dev) and offer
 
 ![Open Source vs Cloud Offering](https://raw.githubusercontent.com/mendableai/firecrawl/main/img/open-source-cloud.png)
 
-
-## Contributing
-
-We love contributions! Please read our [contributing guide](CONTRIBUTING.md) before submitting a pull request. If you'd like to self-host, refer to the [self-hosting guide](SELF_HOST.md).
-
-_It is the sole responsibility of the end users to respect websites' policies when scraping, searching and crawling with Firecrawl. Users are advised to adhere to the applicable privacy policies and terms of use of the websites prior to initiating any scraping activities. By default, Firecrawl respects the directives specified in the websites' robots.txt files when crawling. By utilizing Firecrawl, you expressly agree to comply with these conditions._
-
-## Contributors
-
-<a href="https://github.com/mendableai/firecrawl/graphs/contributors">
-  <img alt="contributors" src="https://contrib.rocks/image?repo=mendableai/firecrawl"/>
-</a>
 
 ## License Disclaimer
 
