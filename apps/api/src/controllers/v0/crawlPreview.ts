@@ -24,14 +24,12 @@ export async function crawlPreviewController(req: Request, res: Response) {
 
     const incomingIP = (req.headers["x-forwarded-for"] ||
       req.socket.remoteAddress) as string;
-    const iptoken = incomingIP + "this_is_just_a_preview_token";
+    const iptoken = incomingIP + process.env.PREVIEW_TOKEN;
     const team_id = `preview_${iptoken}`;
 
     if (!auth.success) {
       return res.status(auth.status).json({ error: auth.error });
     }
-
-    const { plan } = auth;
 
     let url = req.body.url;
     if (!url) {
@@ -99,6 +97,7 @@ export async function crawlPreviewController(req: Request, res: Response) {
       pageOptions,
       undefined,
       undefined,
+      team_id
     );
 
     const sc: StoredCrawl = {
@@ -107,7 +106,6 @@ export async function crawlPreviewController(req: Request, res: Response) {
       scrapeOptions,
       internalOptions,
       team_id,
-      plan,
       robots,
       createdAt: Date.now(),
     };
@@ -129,7 +127,6 @@ export async function crawlPreviewController(req: Request, res: Response) {
                 url,
                 mode: "single_urls",
                 team_id,
-                plan: plan!,
                 crawlerOptions,
                 scrapeOptions,
                 internalOptions,
@@ -152,7 +149,6 @@ export async function crawlPreviewController(req: Request, res: Response) {
           url,
           mode: "single_urls",
           team_id,
-          plan: plan!,
           crawlerOptions,
           scrapeOptions,
           internalOptions,

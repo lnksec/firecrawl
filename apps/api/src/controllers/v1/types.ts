@@ -2,7 +2,6 @@ import { Request, Response } from "express";
 import { z } from "zod";
 import { isUrlBlocked } from "../../scraper/WebScraper/utils/blocklist";
 import { protocolIncluded, checkUrl } from "../../lib/validateUrl";
-import { PlanType } from "../../types";
 import { countries } from "../../lib/validate-country";
 import {
   ExtractorOptions,
@@ -20,7 +19,9 @@ export type Format =
   | "links"
   | "screenshot"
   | "screenshot@fullPage"
-  | "extract";
+  | "extract"
+  | "json"
+  | "changeTracking";
 
 export const url = z.preprocess(
   (x) => {
@@ -114,6 +115,7 @@ export const actionsSchema = z
       z.object({
         type: z.literal("click"),
         selector: z.string(),
+        all: z.boolean().default(false),
       }),
       z.object({
         type: z.literal("screenshot"),
@@ -164,6 +166,7 @@ const baseScrapeOptions = z
         "screenshot@fullPage",
         "extract",
         "json",
+        "changeTracking",
       ])
       .array()
       .optional()
@@ -171,6 +174,10 @@ const baseScrapeOptions = z
       .refine(
         (x) => !(x.includes("screenshot") && x.includes("screenshot@fullPage")),
         "You may only specify either screenshot or screenshot@fullPage",
+      )
+      .refine(
+        (x) => !x.includes("changeTracking") || x.includes("markdown"),
+        "The changeTracking format requires the markdown format to be specified as well",
       ),
     headers: z.record(z.string(), z.string()).optional(),
     includeTags: z.string().array().optional(),
@@ -189,6 +196,13 @@ const baseScrapeOptions = z
     extract: extractOptions.optional(),
     // New
     jsonOptions: extractOptions.optional(),
+    changeTrackingOptions: z
+      .object({
+        prompt: z.string().optional(),
+        schema: z.any().optional(),
+        modes: z.enum(["json", "git-diff"]).array().optional().default([]),
+      })
+      .optional(),
     mobile: z.boolean().default(false),
     parsePDF: z.boolean().default(true),
     actions: actionsSchema.optional(),
@@ -268,6 +282,14 @@ const extractTransform = (obj) => {
     obj = { ...obj, timeout: 60000 };
   }
 
+  if (obj.formats?.includes("changeTracking") && (obj.waitFor === undefined || obj.waitFor < 5000)) {
+    obj = { ...obj, waitFor: 5000 };
+  }
+
+  if (obj.formats?.includes("changeTracking") && obj.timeout === 30000) {
+    obj = { ...obj, timeout: 60000 };
+  }
+
   if (obj.formats?.includes("json")) {
     obj.formats.push("extract");
   }
@@ -314,7 +336,8 @@ export const extractV1Options = z
   .object({
     urls: url
       .array()
-      .max(10, "Maximum of 10 URLs allowed per request while in beta."),
+      .max(10, "Maximum of 10 URLs allowed per request while in beta.")
+      .optional(),
     prompt: z.string().max(10000).optional(),
     systemPrompt: z.string().max(10000).optional(),
     schema: z
@@ -354,6 +377,12 @@ export const extractV1Options = z
       .optional(),
   })
   .strict(strictMessage)
+  .refine(
+    (obj) => obj.urls || obj.prompt,
+    {
+      message: "Either 'urls' or 'prompt' must be provided.",
+    },
+  )
   .transform((obj) => ({
     ...obj,
     allowExternalLinks: obj.allowExternalLinks || obj.enableWebSearch,
@@ -440,6 +469,7 @@ const crawlerOptions = z
     includePaths: z.string().array().default([]),
     excludePaths: z.string().array().default([]),
     maxDepth: z.number().default(10), // default?
+    maxDiscoveryDepth: z.number().optional(),
     limit: z.number().default(10000), // default?
     allowBackwardLinks: z.boolean().default(false), // >> TODO: CHANGE THIS NAME???
     allowExternalLinks: z.boolean().default(false),
@@ -448,6 +478,7 @@ const crawlerOptions = z
     ignoreSitemap: z.boolean().default(false),
     deduplicateSimilarURLs: z.boolean().default(true),
     ignoreQueryParameters: z.boolean().default(false),
+    regexOnFullURL: z.boolean().default(false),
   })
   .strict(strictMessage);
 
@@ -504,6 +535,7 @@ export const mapRequestSchema = crawlerOptions
     limit: z.number().min(1).max(30000).default(5000),
     timeout: z.number().positive().finite().optional(),
     useMock: z.string().optional(),
+    filterByPath: z.boolean().default(true),
   })
   .strict(strictMessage);
 
@@ -530,7 +562,37 @@ export type Document = {
   actions?: {
     screenshots?: string[];
     scrapes?: ScrapeActionContent[];
+    javascriptReturns?: {
+      type: string,
+      value: unknown
+    }[];
   };
+  changeTracking?: {
+    previousScrapeAt: string | null;
+    changeStatus: "new" | "same" | "changed" | "removed";
+    visibility: "visible" | "hidden";
+    diff?: {
+      text: string;
+      json: {
+        files: Array<{
+          from: string | null;
+          to: string | null;
+          chunks: Array<{
+            content: string;
+            changes: Array<{
+              type: string;
+              normal?: boolean;
+              ln?: number;
+              ln1?: number;
+              ln2?: number;
+              content: string;
+            }>;
+          }>;
+        }>;
+      };
+    };
+    json?: any;
+  }
   metadata: {
     title?: string;
     description?: string;
@@ -703,7 +765,6 @@ export type CrawlErrorsResponse =
 
 type AuthObject = {
   team_id: string;
-  plan: PlanType | undefined;
 };
 
 type Account = {
@@ -716,17 +777,35 @@ export type AuthCreditUsageChunk = {
   sub_id: string | null;
   sub_current_period_start: string | null;
   sub_current_period_end: string | null;
+  sub_user_id: string | null;
   price_id: string | null;
   price_credits: number; // credit limit with assoicated price, or free_credits (500) if free plan
   credits_used: number;
   coupon_credits: number; // do not rely on this number to be up to date after calling a billTeam
-  coupons: any[];
   adjusted_credits_used: number; // credits this period minus coupons used
   remaining_credits: number;
-  sub_user_id: string | null;
   total_credits_sum: number;
+  plan_priority: {
+    bucketLimit: number;
+    planModifier: number;
+  };
+  rate_limits: {
+    crawl: number;
+    scrape: number;
+    search: number;
+    map: number;
+    extract: number;
+    preview: number;
+    crawlStatus: number;
+    extractStatus: number;
+  };
+  concurrency: number;
+
+  // appended on JS-side
   is_extract?: boolean;
 };
+
+export type AuthCreditUsageChunkFromTeam = Omit<AuthCreditUsageChunk, "api_key">;
 
 export interface RequestWithMaybeACUC<
   ReqParams = {},
@@ -791,10 +870,13 @@ export function toLegacyCrawlerOptions(x: CrawlerOptions) {
     ignoreSitemap: x.ignoreSitemap,
     deduplicateSimilarURLs: x.deduplicateSimilarURLs,
     ignoreQueryParameters: x.ignoreQueryParameters,
+    regexOnFullURL: x.regexOnFullURL,
+    maxDiscoveryDepth: x.maxDiscoveryDepth,
+    currentDiscoveryDepth: 0,
   };
 }
 
-export function fromLegacyCrawlerOptions(x: any): {
+export function fromLegacyCrawlerOptions(x: any, teamId: string): {
   crawlOptions: CrawlerOptions;
   internalOptions: InternalOptions;
 } {
@@ -811,9 +893,12 @@ export function fromLegacyCrawlerOptions(x: any): {
       ignoreSitemap: x.ignoreSitemap,
       deduplicateSimilarURLs: x.deduplicateSimilarURLs,
       ignoreQueryParameters: x.ignoreQueryParameters,
-    }),
+      regexOnFullURL: x.regexOnFullURL,
+      maxDiscoveryDepth: x.maxDiscoveryDepth,
+   }),
     internalOptions: {
       v0CrawlOnlyUrls: x.returnOnlyUrls,
+      teamId,
     },
   };
 }
@@ -827,6 +912,7 @@ export function fromLegacyScrapeOptions(
   pageOptions: PageOptions,
   extractorOptions: ExtractorOptions | undefined,
   timeout: number | undefined,
+  teamId: string,
 ): { scrapeOptions: ScrapeOptions; internalOptions: InternalOptions } {
   return {
     scrapeOptions: scrapeOptions.parse({
@@ -876,6 +962,7 @@ export function fromLegacyScrapeOptions(
     internalOptions: {
       atsv: pageOptions.atsv,
       v0DisableJsDom: pageOptions.disableJsDom,
+      teamId,
     },
     // TODO: fallback, fetchPageContent, replaceAllPathsWithAbsolutePaths, includeLinks
   };
@@ -886,13 +973,15 @@ export function fromLegacyCombo(
   extractorOptions: ExtractorOptions | undefined,
   timeout: number | undefined,
   crawlerOptions: any,
+  teamId: string,
 ): { scrapeOptions: ScrapeOptions; internalOptions: InternalOptions } {
   const { scrapeOptions, internalOptions: i1 } = fromLegacyScrapeOptions(
     pageOptions,
     extractorOptions,
     timeout,
+    teamId,
   );
-  const { internalOptions: i2 } = fromLegacyCrawlerOptions(crawlerOptions);
+  const { internalOptions: i2 } = fromLegacyCrawlerOptions(crawlerOptions, teamId);
   return { scrapeOptions, internalOptions: Object.assign(i1, i2) };
 }
 
@@ -933,7 +1022,7 @@ export const searchRequestSchema = z
       .positive()
       .finite()
       .safe()
-      .max(20)
+      .max(50)
       .optional()
       .default(5),
     tbs: z.string().optional(),
@@ -994,7 +1083,7 @@ export const generateLLMsTextRequestSchema = z.object({
   maxUrls: z
     .number()
     .min(1)
-    .max(100)
+    .max(5000)
     .default(10)
     .describe("Maximum number of URLs to process"),
   showFullText: z

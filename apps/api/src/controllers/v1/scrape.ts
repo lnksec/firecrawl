@@ -12,26 +12,35 @@ import { v4 as uuidv4 } from "uuid";
 import { addScrapeJob, waitForJob } from "../../services/queue-jobs";
 import { logJob } from "../../services/logging/log_job";
 import { getJobPriority } from "../../lib/job-priority";
-import { PlanType } from "../../types";
 import { getScrapeQueue } from "../../services/queue-service";
 
 export async function scrapeController(
   req: RequestWithAuth<{}, ScrapeResponse, ScrapeRequest>,
   res: Response<ScrapeResponse>,
 ) {
+  const jobId = uuidv4();
+  const preNormalizedBody = { ...req.body };
+ 
+  logger.debug("Scrape " + jobId + " starting", {
+    scrapeId: jobId,
+    request: req.body,
+    originalRequest: preNormalizedBody,
+    teamId: req.auth.team_id,
+    account: req.account,
+  });
+
   req.body = scrapeRequestSchema.parse(req.body);
   let earlyReturn = false;
 
   const origin = req.body.origin;
   const timeout = req.body.timeout;
-  const jobId = uuidv4();
 
   const startTime = new Date().getTime();
   const jobPriority = await getJobPriority({
-    plan: req.auth.plan as PlanType,
     team_id: req.auth.team_id,
     basePriority: 10,
   });
+  // 
 
   await addScrapeJob(
     {
@@ -39,8 +48,7 @@ export async function scrapeController(
       mode: "single_urls",
       team_id: req.auth.team_id,
       scrapeOptions: req.body,
-      internalOptions: {},
-      plan: req.auth.plan!,
+      internalOptions: { teamId: req.auth.team_id },
       origin: req.body.origin,
       is_scrape: true,
     },
@@ -96,7 +104,7 @@ export async function scrapeController(
     // Don't bill if we're early returning
     return;
   }
-  if (req.body.extract && req.body.formats.includes("extract")) {
+  if ((req.body.extract && req.body.formats?.includes("extract")) || (req.body.formats?.includes("changeTracking") && req.body.changeTrackingOptions?.modes?.includes("json"))) {
     creditsToBeBilled = 5;
   }
 

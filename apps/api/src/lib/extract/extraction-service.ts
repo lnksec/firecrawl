@@ -4,9 +4,8 @@ import {
   TokenUsage,
   URLTrace,
 } from "../../controllers/v1/types";
-import { PlanType } from "../../types";
 import { logger as _logger } from "../logger";
-import { processUrl } from "./url-processor";
+import { generateBasicCompletion, processUrl } from "./url-processor";
 import { scrapeDocument } from "./document-scraper";
 import {
   generateCompletions,
@@ -38,11 +37,12 @@ import { singleAnswerCompletion } from "./completions/singleAnswer";
 import { SourceTracker } from "./helpers/source-tracker";
 import { getCachedDocs, saveCachedDocs } from "./helpers/cached-docs";
 import { normalizeUrl } from "../canonical-url";
+import { search } from "../../search";
+import { buildRephraseToSerpPrompt } from "./build-prompts";
 
 interface ExtractServiceOptions {
   request: ExtractRequest;
   teamId: string;
-  plan: PlanType;
   subId?: string;
   cacheMode?: "load" | "save" | "direct";
   cacheKey?: string;
@@ -74,7 +74,7 @@ export async function performExtraction(
   extractId: string,
   options: ExtractServiceOptions,
 ): Promise<ExtractResult> {
-  const { request, teamId, plan, subId } = options;
+  const { request, teamId, subId } = options;
   const urlTraces: URLTrace[] = [];
   let docsMap: Map<string, Document> = new Map();
   let singleAnswerCompletions: completions | null = null;
@@ -84,16 +84,44 @@ export async function performExtraction(
   let totalUrlsScraped = 0;
   let sources: Record<string, string[]> = {};
 
+
   const logger = _logger.child({
     module: "extract",
     method: "performExtraction",
     extractId,
+    teamId,
   });
 
-  if (request.__experimental_cacheMode == "load" && request.__experimental_cacheKey) {
+  // If no URLs are provided, generate URLs from the prompt
+  if ((!request.urls || request.urls.length === 0) && request.prompt) {
+    logger.debug("Generating URLs from prompt...", {
+      prompt: request.prompt,
+    });
+    const rephrasedPrompt = await generateBasicCompletion(buildRephraseToSerpPrompt(request.prompt));
+    const searchResults = await search({
+      query:  rephrasedPrompt.replace('"', "").replace("'", ""),
+      num_results: 10,
+    });
+
+    request.urls = searchResults.map(result => result.url) as string[];
+  }
+  if (request.urls && request.urls.length === 0) {
+    logger.error("No search results found", {
+      query: request.prompt,
+    });
+    return {
+      success: false,
+      error: "No search results found",
+      extractId,
+    };
+  }
+
+  const urls = request.urls || ([] as string[]);
+
+  if (request.__experimental_cacheMode == "load" && request.__experimental_cacheKey && urls) {
     logger.debug("Loading cached docs...");
     try {
-      const cache = await getCachedDocs(request.urls, request.__experimental_cacheKey);
+      const cache = await getCachedDocs(urls, request.__experimental_cacheKey);
       for (const doc of cache) {
         if (doc.metadata.url) {
           docsMap.set(normalizeUrl(doc.metadata.url), doc);
@@ -122,17 +150,15 @@ export async function performExtraction(
   let startMap = Date.now();
   let aggMapLinks: string[] = [];
   logger.debug("Processing URLs...", {
-    urlCount: request.urls.length,
+    urlCount: request.urls?.length || 0,
   });
   
-  // Process URLs
-  const urlPromises = request.urls.map((url) =>
+  const urlPromises = urls.map((url) =>
     processUrl(
       {
         url,
         prompt: request.prompt,
         teamId,
-        plan,
         allowExternalLinks: request.allowExternalLinks,
         origin: request.origin,
         limit: request.limit,
@@ -282,7 +308,6 @@ export async function performExtraction(
           {
             url,
             teamId,
-            plan,
             origin: request.origin || "api",
             timeout,
           },
@@ -545,7 +570,6 @@ export async function performExtraction(
           {
             url,
             teamId,
-            plan,
             origin: request.origin || "api",
             timeout,
           },
@@ -746,7 +770,7 @@ export async function performExtraction(
     time_taken: (new Date().getTime() - Date.now()) / 1000,
     team_id: teamId,
     mode: "extract",
-    url: request.urls.join(", "),
+    url: request.urls?.join(", ") || "",
     scrapeOptions: request,
     origin: request.origin ?? "api",
     num_tokens: totalTokensUsed,
